@@ -295,6 +295,59 @@ table.mx tr.dl-row td { background: rgba(255,77,109,.06); }
 /* Loading spinner overlay */
 .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Simulate tab layout ─────────────────────────────── */
+.simulate-layout {
+  flex: 1; display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 10px;
+  padding: 0 16px 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Left column: stacked matrices */
+.sim-matrices-col {
+  display: flex; flex-direction: column;
+  gap: 10px; min-height: 0; overflow: hidden;
+}
+.sim-matrices-col .panel { flex: 1; min-height: 0; }
+
+/* Right column: live RAG */
+.sim-rag-col {
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rad);
+}
+.sim-rag-col .rag-wrap { flex: 1; display: flex; flex-direction: column; padding: 8px; min-height: 0; }
+#sim-rag-canvas { width: 100%; flex: 1; display: block; min-height: 0; }
+
+/* Dim-control bar */
+.sim-toolbar {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 16px;
+  padding: 9px 16px 7px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+.dim-ctrl { display: flex; align-items: center; gap: 7px; }
+.dim-ctrl span.label { font-family: var(--mono); font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: .8px; }
+.dim-btn {
+  width: 24px; height: 24px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg3);
+  color: var(--text); font-size: 15px; font-weight: 700;
+  cursor: pointer; line-height: 1; display: grid; place-items: center;
+  transition: all .15s;
+}
+.dim-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dim-btn:active { transform: scale(.9); }
+.dim-val {
+  font-family: var(--mono); font-size: 14px; font-weight: 700;
+  color: var(--accent); min-width: 16px; text-align: center;
+}
+/* Live-pulse badge on RAG header */
+@keyframes live-pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+.live-badge { color: var(--success) !important; animation: live-pulse 2s infinite; }
 </style>
 </head>
 <body>
@@ -348,8 +401,8 @@ table.mx tr.dl-row td { background: rgba(255,77,109,.06); }
       <label>Configuration</label>
       <div class="slider-row">
         <span>Processes</span>
-        <input type="range" id="proc-slider" min="2" max="8" value="4" oninput="onSliderChange()"/>
-        <span class="val" id="proc-val">4</span>
+        <input type="range" id="proc-slider" min="2" max="8" value="3" oninput="onSliderChange()"/>
+        <span class="val" id="proc-val">3</span>
       </div>
       <div class="slider-row">
         <span>Resources</span>
@@ -417,31 +470,69 @@ table.mx tr.dl-row td { background: rgba(255,77,109,.06); }
 
     <!-- SIMULATE TAB -->
     <div class="tab-page" id="tab-simulate">
-      <div class="two-col" style="padding-top:14px; flex:1;">
-        <div class="panel">
-          <div class="panel-hdr">
-            <h3>Allocation Matrix</h3>
-            <span class="badge">Resources held by each process</span>
-          </div>
-          <div class="panel-body scroll-area">
-            <div class="matrix-label">Alloc[i][j] = units of resource Rj held by Pi</div>
-            <div id="alloc-table"></div>
-          </div>
+
+      <!-- Toolbar: dimension controls + action buttons -->
+      <div class="sim-toolbar">
+        <!-- Processes +/- -->
+        <div class="dim-ctrl">
+          <span class="label">Processes</span>
+          <button class="dim-btn" onclick="adjustDim('proc',-1)">−</button>
+          <span class="dim-val" id="sim-proc-val">3</span>
+          <button class="dim-btn" onclick="adjustDim('proc',+1)">+</button>
         </div>
-        <div class="panel">
-          <div class="panel-hdr">
-            <h3>Request Matrix</h3>
-            <span class="badge">Resources each process is waiting for</span>
-          </div>
-          <div class="panel-body scroll-area">
-            <div class="matrix-label">Req[i][j] = units of resource Rj requested by Pi</div>
-            <div id="req-table"></div>
-          </div>
+        <div style="width:1px;height:18px;background:var(--border);"></div>
+        <!-- Resources +/- -->
+        <div class="dim-ctrl">
+          <span class="label">Resources</span>
+          <button class="dim-btn" onclick="adjustDim('res',-1)">−</button>
+          <span class="dim-val" id="sim-res-val">3</span>
+          <button class="dim-btn" onclick="adjustDim('res',+1)">+</button>
+        </div>
+        <!-- Actions -->
+        <div style="margin-left:auto;display:flex;gap:8px;">
+          <button class="action-btn primary" onclick="applyAndDetect()">✔ Apply &amp; Detect</button>
+          <button class="action-btn" onclick="randomize()">🎲 Randomize</button>
         </div>
       </div>
-      <div style="padding: 0 16px 14px; display:flex; gap:8px; flex-shrink:0;">
-        <button class="action-btn primary" onclick="applyAndDetect()">✔ Apply &amp; Detect</button>
-        <button class="action-btn" onclick="randomize()">🎲 Randomize</button>
+
+      <!-- Two-column body: matrices left, live RAG right -->
+      <div class="simulate-layout">
+
+        <!-- LEFT: Allocation stacked above Request -->
+        <div class="sim-matrices-col">
+          <div class="panel">
+            <div class="panel-hdr">
+              <h3>Allocation Matrix</h3>
+              <span class="badge">Resources held by each process</span>
+            </div>
+            <div class="panel-body scroll-area">
+              <div class="matrix-label">Alloc[i][j] = units of Rj held by Pi</div>
+              <div id="alloc-table"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-hdr">
+              <h3>Request Matrix</h3>
+              <span class="badge" id="req-sync-badge">Synced with allocation</span>
+            </div>
+            <div class="panel-body scroll-area">
+              <div class="matrix-label">Req[i][j] = units of Rj requested by Pi</div>
+              <div id="req-table"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Live RAG canvas -->
+        <div class="sim-rag-col">
+          <div class="panel-hdr">
+            <h3>Live Resource Allocation Graph</h3>
+            <span class="badge live-badge">● LIVE</span>
+          </div>
+          <div class="rag-wrap">
+            <canvas id="sim-rag-canvas"></canvas>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -571,12 +662,12 @@ table.mx tr.dl-row td { background: rgba(255,77,109,.06); }
 //  State
 // ═══════════════════════════════════════════════════════
 let state = {
-  n_proc: 4, n_res: 3,
-  alloc:    [[0,1,0],[2,0,0],[3,0,2],[2,1,1]],
-  req:      [[0,0,0],[2,0,2],[0,0,0],[1,0,0]],
-  avail:    [3,3,2],
-  max_need: [[7,5,3],[3,2,2],[9,0,2],[2,2,2]],
-  // last detection result
+  // Default: 3 processes, 3 resources — matches circular3 preset
+  n_proc: 3, n_res: 3,
+  alloc:    [[1,0,0],[0,1,0],[0,0,1]],
+  req:      [[0,1,0],[0,0,1],[1,0,0]],
+  avail:    [0,0,0],
+  max_need: [[2,1,1],[1,2,1],[1,1,2]],
   cycles: [], deadlocked: []
 };
 
@@ -587,7 +678,7 @@ window.addEventListener('load', () => {
   loadPreset('circular3');
 });
 
-window.addEventListener('resize', drawRAG);
+window.addEventListener('resize', () => { drawRAG(); drawSimRAG(); });
 
 // ═══════════════════════════════════════════════════════
 //  Tab navigation
@@ -604,7 +695,18 @@ function switchTab(name) {
     }
   });
   if (name === 'dashboard') setTimeout(drawRAG, 50);
+  if (name === 'simulate')  setTimeout(drawSimRAG, 50);
   if (name === 'banker') buildBankerAvailRow();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Simulate-tab +/- dimension buttons
+// ═══════════════════════════════════════════════════════
+function adjustDim(type, delta) {
+  const slider = document.getElementById(type === 'proc' ? 'proc-slider' : 'res-slider');
+  const next   = Math.min(+slider.max, Math.max(+slider.min, +slider.value + delta));
+  slider.value = next;
+  onSliderChange();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -615,6 +717,11 @@ function onSliderChange() {
   const nr = +document.getElementById('res-slider').value;
   document.getElementById('proc-val').textContent = np;
   document.getElementById('res-val').textContent  = nr;
+  // Keep simulate-tab +/- counters in sync
+  const _spv = document.getElementById('sim-proc-val');
+  const _srv = document.getElementById('sim-res-val');
+  if (_spv) _spv.textContent = np;
+  if (_srv) _srv.textContent = nr;
 
   // resize matrices
   function resizeMat(mat, rows, cols) {
@@ -744,13 +851,36 @@ function buildMaxTable(deadlocked=[]) {
 }
 
 function rebuildTables() {
+  // Flush any in-progress DOM edits into state BEFORE re-rendering.
+  // This prevents the req table from resetting to stale state.req values
+  // whenever a rebuild is triggered (slider, preset, randomize, etc.)
+  readMatrices();
   buildMatrixTable('alloc-table', 'alloc', 'alloc', state.deadlocked || []);
   buildMatrixTable('req-table',   'req',   'req',   state.deadlocked || []);
   buildMaxTable(state.deadlocked || []);
+  // Keep the simulate-tab RAG in sync with any structural change
+  drawSimRAG();
 }
 
 function onMatrixInput(matKey, i, j, val) {
+  // 1. Write the changed cell into state
   state[matKey][i][j] = parseInt(val) || 0;
+  // 2. Redraw both RAG canvases immediately (live feedback)
+  drawRAG();
+  drawSimRAG();
+  // 3. If the allocation matrix changed, flash the req badge to signal sync
+  if (matKey === 'alloc') {
+    const badge = document.getElementById('req-sync-badge');
+    if (badge) {
+      badge.textContent = '↺ Updated';
+      badge.style.color = 'var(--warn)';
+      clearTimeout(badge._t);
+      badge._t = setTimeout(() => {
+        badge.textContent = 'Synced with allocation';
+        badge.style.color = '';
+      }, 800);
+    }
+  }
 }
 
 function buildBankerAvailRow() {
@@ -798,6 +928,7 @@ async function runDetection() {
 
     updateStats();
     drawRAG();
+    drawSimRAG();
     renderDetectResults(data);
     renderDFSTrace([...data.dfs_trace, ...data.mat_trace]);
     updateVictimSelect(state.deadlocked);
@@ -1152,6 +1283,91 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.lineTo(x+r, y+h);    ctx.quadraticCurveTo(x, y+h, x, y+h-r);
   ctx.lineTo(x, y+r);      ctx.quadraticCurveTo(x, y, x+r, y);
   ctx.closePath();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Simulate-tab Live RAG (targets #sim-rag-canvas)
+//  Uses getBoundingClientRect so it works even when the
+//  dashboard tab is hidden (clientWidth would be 0 there).
+// ═══════════════════════════════════════════════════════
+function drawSimRAG() {
+  const canvas = document.getElementById('sim-rag-canvas');
+  if (!canvas) return;
+  const wrap = canvas.parentElement;
+  if (!wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const W = Math.floor(rect.width  - 16);
+  const H = Math.floor(rect.height - 16);
+  if (W < 20 || H < 20) return;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#161924';
+  ctx.fillRect(0, 0, W, H);
+
+  const np = state.n_proc, nr = state.n_res;
+  const PR = 20, RR = 16, pad = 48;
+  const deadlocked = new Set(state.deadlocked || []);
+
+  const procPos = [], resPos = [];
+  for (let i = 0; i < np; i++)
+    procPos.push({ x: W*0.26, y: pad + (H-2*pad)*(i/Math.max(np-1,1)) });
+  for (let j = 0; j < nr; j++)
+    resPos.push({ x: W*0.74, y: pad + (H-2*pad)*(j/Math.max(nr-1,1)) });
+
+  const PC = ['#4f8fff','#3dffa0','#ff6b6b','#ffd93d','#c77dff','#ff9f43','#48dbfb','#ff6b9d'];
+  const RC = ['#4f8fff','#3dffa0','#ffd93d','#ff6b6b','#c77dff','#ff9f43'];
+
+  // Edges
+  for (let i = 0; i < np; i++) {
+    for (let j = 0; j < nr; j++) {
+      const p = procPos[i], r = resPos[j], inDL = deadlocked.has(i);
+      if (state.alloc[i]?.[j] > 0) {
+        drawArrow(ctx, r.x-RR, r.y, p.x+PR, p.y, inDL ? '#ff4d6d' : '#3dffa0', 0.82);
+        const mx=(r.x-RR+p.x+PR)/2, my=(r.y+p.y)/2;
+        ctx.save(); ctx.font='9px JetBrains Mono';
+        ctx.fillStyle = inDL?'#ff4d6d':'#3dffa0';
+        ctx.fillText(state.alloc[i][j], mx+3, my-3); ctx.restore();
+      }
+      if (state.req[i]?.[j] > 0)
+        drawArrow(ctx, p.x-PR, p.y, r.x+RR, r.y, inDL?'#ff4d6d88':'#4f8fff', 0.76);
+    }
+  }
+
+  // Resource rectangles
+  for (let j = 0; j < nr; j++) {
+    const {x,y} = resPos[j], c = RC[j%RC.length];
+    ctx.save();
+    ctx.strokeStyle=c; ctx.lineWidth=2; ctx.fillStyle='#1e2231';
+    roundRect(ctx,x-RR,y-RR,RR*2,RR*2,4); ctx.fill(); ctx.stroke();
+    ctx.font='bold 10px JetBrains Mono'; ctx.fillStyle=c; ctx.textAlign='center';
+    ctx.fillText('R'+j, x, y-2);
+    ctx.font='8px JetBrains Mono'; ctx.fillStyle='#6e7a96';
+    ctx.fillText('a:'+(state.avail[j]||0), x, y+10); ctx.restore();
+  }
+
+  // Process circles
+  for (let i = 0; i < np; i++) {
+    const {x,y} = procPos[i], inDL=deadlocked.has(i), c=inDL?'#ff4d6d':PC[i%PC.length];
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x,y,PR,0,Math.PI*2);
+    ctx.fillStyle=inDL?'rgba(255,77,109,.15)':'#1a2030';
+    ctx.strokeStyle=c; ctx.lineWidth=2; ctx.fill(); ctx.stroke();
+    if (inDL) { ctx.shadowColor='#ff4d6d'; ctx.shadowBlur=10; ctx.stroke(); }
+    ctx.shadowBlur=0;
+    ctx.font='bold 10px JetBrains Mono'; ctx.fillStyle=c;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('P'+i, x, y); ctx.restore();
+  }
+
+  // Legend
+  ctx.save(); ctx.font='9px JetBrains Mono';
+  [['→ Alloc','#3dffa0'],['→ Req','#4f8fff'],['■ DL','#ff4d6d']].reduce((lx,[t,c])=>{
+    ctx.fillStyle=c; ctx.fillText(t,lx,H-7); return lx+ctx.measureText(t).width+12;
+  }, 8);
+  ctx.restore();
 }
 
 // ═══════════════════════════════════════════════════════

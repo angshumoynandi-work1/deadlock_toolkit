@@ -124,16 +124,43 @@ def index():
 @app.route("/api/detect", methods=["POST"])
 def detect():
     d = request.json
-    cycles, dfs_trace = detect_cycles_dfs(d["n_proc"], d["n_res"], d["alloc"], d["req"])
+    # DFS builds the Wait-For graph for visual representation only.
+    # It is NOT authoritative for deadlock in multi-instance systems.
+    wait_for_cycles, dfs_trace = detect_cycles_dfs(d["n_proc"], d["n_res"], d["alloc"], d["req"])
+
+    # Matrix Method is the sole authority: a process is deadlocked iff it
+    # cannot finish even after all other completable processes release resources.
     deadlocked, mat_trace = resource_allocation_method(d["n_proc"], d["n_res"], d["alloc"], d["req"], d["avail"])
-    return jsonify({"cycles":cycles,"deadlocked":deadlocked,"dfs_trace":dfs_trace,"mat_trace":mat_trace})
+
+    return jsonify({
+        # Primary deadlock authority — use this for all highlighting & status.
+        "deadlocked": deadlocked,
+        "deadlock_confirmed": len(deadlocked) > 0,
+        # Secondary visual aid — shows Wait-For graph cycles, NOT deadlock truth.
+        "wait_for_cycles": wait_for_cycles,
+        # Keep legacy "cycles" key so existing callers don't break, but it now
+        # mirrors wait_for_cycles and must never drive the deadlock decision.
+        "cycles": wait_for_cycles,
+        "dfs_trace": dfs_trace,
+        "mat_trace": mat_trace,
+    })
 
 
 @app.route("/api/banker", methods=["POST"])
 def banker():
     d = request.json
     safe, seq, trace, need = bankers_safety(d["n_proc"], d["n_res"], d["alloc"], d["max_need"], d["avail"])
-    return jsonify({"safe":safe,"sequence":seq,"trace":trace,"need":need})
+    # Expose unsafe processes so the frontend can sync state.deadlocked if desired.
+    unsafe_procs = [i for i in range(d["n_proc"]) if i not in seq] if not safe else []
+    return jsonify({
+        "safe": safe,
+        "sequence": seq,
+        "trace": trace,
+        "need": need,
+        # Mirrors detect endpoint contract so the frontend can unify state.
+        "deadlock_confirmed": not safe,
+        "unsafe_procs": unsafe_procs,
+    })
 
 
 @app.route("/api/preset/<name>")
